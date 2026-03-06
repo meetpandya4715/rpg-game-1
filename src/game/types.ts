@@ -1,5 +1,8 @@
 export type EquipmentSlot = 'weapon' | 'armor'
 export type QuestStatus = 'not_started' | 'active' | 'complete'
+export type SaveKind = 'auto' | 'manual'
+export type ObjectiveTargetKind = 'npc' | 'exit' | 'enemy' | 'none'
+export type NotificationKind = 'combat' | 'quest' | 'loot' | 'save' | 'system'
 
 export interface Vector2 {
   x: number
@@ -37,7 +40,35 @@ export interface QuestProgress {
 
 export interface SaveMeta {
   savedAt: string
-  version: number
+  version: 2
+  kind: SaveKind
+}
+
+export interface SaveStatus {
+  kind: SaveKind
+  savedAt: string | null
+}
+
+export interface ObjectiveTarget {
+  kind: ObjectiveTargetKind
+  mapId: string | null
+  targetId: string | null
+  label: string | null
+}
+
+export interface CelebrationView {
+  title: string
+  summary: string
+  rewards: string[]
+}
+
+export interface NotificationEntry {
+  id: string
+  message: string
+  kind: NotificationKind
+  count: number
+  dedupeKey?: string
+  occurredAt: number
 }
 
 export interface GameState {
@@ -53,7 +84,7 @@ export interface GameState {
   questProgress: Record<string, QuestProgress>
   flags: Record<string, boolean>
   defeatedEnemyIds: string[]
-  notifications: string[]
+  notifications: NotificationEntry[]
   saveMeta: SaveMeta | null
 }
 
@@ -236,12 +267,14 @@ export interface GameSnapshot {
   locationName: string
   locationDescription: string
   nextStep: string
+  saveStatus: SaveStatus
+  objectiveTarget: ObjectiveTarget
+  celebration: CelebrationView | null
   player: PlayerView | null
   inventory: InventoryView[]
   quests: QuestView[]
   dialogue: DialogueView | null
-  notifications: string[]
+  notifications: NotificationEntry[]
   interactionHint: string | null
   objective: string
-  lastSavedAt: string | null
 }

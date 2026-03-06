@@ -86,6 +86,10 @@ export class GameController {
     this.scene?.useItem(itemId)
   }
 
+  attackNearby(): void {
+    this.scene?.attackNearby()
+  }
+
   toggleEquipment(itemId: string): void {
     this.scene?.toggleEquipment(itemId)
   }

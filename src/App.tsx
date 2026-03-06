@@ -3,17 +3,39 @@ import './App.css'
 import { loadContentPack } from './game/content'
 import { GameController } from './game/controller'
 import { createLoadingSnapshot } from './game/state'
-import type { ContentPack, DialogueOption, GameSnapshot, InventoryView, QuestView } from './game/types'
+import type {
+  ContentPack,
+  DialogueOption,
+  GameSnapshot,
+  InventoryView,
+  NotificationEntry,
+  QuestView,
+  SaveStatus,
+} from './game/types'
 
-function formatSaveTime(isoTime: string | null): string {
-  if (!isoTime) {
+type SidebarView = 'guide' | 'quests' | 'inventory' | 'log'
+
+const EMPTY_DIALOGUE_OPTIONS: DialogueOption[] = []
+const KEYBOARD_GUIDE = [
+  { key: 'Move', description: 'WASD or arrow keys' },
+  { key: 'Talk', description: 'E near a villager' },
+  { key: 'Attack', description: 'Space near a threat' },
+  { key: 'Heal', description: 'H uses a tonic' },
+  { key: 'Save', description: 'P locks a manual save' },
+  { key: 'Deck', description: '1-4 or Q / I / L' },
+]
+
+function formatSaveStatus(saveStatus: SaveStatus): string {
+  if (!saveStatus.savedAt) {
     return 'No save yet'
   }
 
-  return new Intl.DateTimeFormat(undefined, {
+  const formatted = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }).format(new Date(isoTime))
+  }).format(new Date(saveStatus.savedAt))
+
+  return `${saveStatus.kind === 'manual' ? 'Manual save' : 'Autosaved'} ${formatted}`
 }
 
 function renderQuestStatus(quest: QuestView): string {
@@ -35,16 +57,24 @@ function renderItemAction(item: InventoryView): string | null {
   return null
 }
 
-type SidebarView = 'guide' | 'quests' | 'inventory' | 'log'
-const EMPTY_DIALOGUE_OPTIONS: DialogueOption[] = []
-const KEYBOARD_GUIDE = [
-  { key: 'Move', description: 'WASD or arrow keys' },
-  { key: 'Talk', description: 'E near a villager' },
-  { key: 'Attack', description: 'Space near an enemy' },
-  { key: 'Heal', description: 'H uses a tonic' },
-  { key: 'Save', description: 'P saves instantly' },
-  { key: 'Panels', description: '1-4 or Q / I / L' },
-]
+function renderNotificationText(notification: NotificationEntry): string {
+  return notification.count > 1 ? `${notification.message} x${notification.count}` : notification.message
+}
+
+function renderNotificationKind(notification: NotificationEntry): string {
+  switch (notification.kind) {
+    case 'combat':
+      return 'Combat'
+    case 'quest':
+      return 'Quest'
+    case 'loot':
+      return 'Loot'
+    case 'save':
+      return 'Save'
+    default:
+      return 'Field'
+  }
+}
 
 function App() {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -54,6 +84,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [sidebarView, setSidebarView] = useState<SidebarView>('guide')
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [hiddenCelebrationTitle, setHiddenCelebrationTitle] = useState<string | null>(null)
   const [dialogueSelection, setDialogueSelection] = useState<{ nodeId: string | null; index: number }>({
     nodeId: null,
     index: 0,
@@ -67,22 +98,23 @@ function App() {
       : 0
   const clampedInventoryIndex = Math.min(selectedInventoryIndex, Math.max(0, snapshot.inventory.length - 1))
   const selectedInventoryItem = snapshot.inventory[clampedInventoryIndex] ?? null
+  const potionCount = snapshot.inventory.find((entry) => entry.item.id === 'potion')?.quantity ?? 0
+  const lowHealth = snapshot.player ? snapshot.player.hp / snapshot.player.maxHp <= 0.35 : false
+  const celebrationVisible = Boolean(snapshot.celebration && snapshot.celebration.title !== hiddenCelebrationTitle)
 
   useEffect(() => {
     let cancelled = false
 
     loadContentPack()
       .then((loadedContent) => {
-        if (cancelled) {
-          return
+        if (!cancelled) {
+          setContent(loadedContent)
         }
-        setContent(loadedContent)
       })
       .catch((loadError: unknown) => {
-        if (cancelled) {
-          return
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : 'Failed to load the RPG content pack.')
         }
-        setError(loadError instanceof Error ? loadError.message : 'Failed to load the RPG content pack.')
       })
 
     return () => {
@@ -112,6 +144,16 @@ function App() {
       controllerRef.current = null
     }
   }, [content])
+
+  useEffect(() => {
+    if (snapshot.celebration && snapshot.celebration.title !== hiddenCelebrationTitle) {
+      return
+    }
+
+    if (!snapshot.celebration && hiddenCelebrationTitle) {
+      setHiddenCelebrationTitle(null)
+    }
+  }, [hiddenCelebrationTitle, snapshot.celebration])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -160,10 +202,7 @@ function App() {
           }
           setDialogueSelection((current) => ({
             nodeId: dialogue.node.id,
-            index:
-              current.nodeId === dialogue.node.id
-                ? (current.index + 1) % dialogueOptions.length
-                : 0,
+            index: current.nodeId === dialogue.node.id ? (current.index + 1) % dialogueOptions.length : 0,
           }))
           return
         }
@@ -290,113 +329,144 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [
+    activeDialogueIndex,
     dialogue,
     dialogueOptions,
-    activeDialogueIndex,
     selectedInventoryItem,
-    sidebarView,
     showShortcuts,
+    sidebarView,
     snapshot.canContinue,
     snapshot.inventory,
     snapshot.screen,
   ])
 
+  const renderInventoryAction = (item: InventoryView) => {
+    const action = renderItemAction(item)
+    if (!action) {
+      return null
+    }
+
+    return (
+      <button
+        type="button"
+        className="pill-button secondary"
+        onClick={() => {
+          if (item.item.type === 'consumable') {
+            controllerRef.current?.useItem(item.item.id)
+            return
+          }
+          if (item.item.slot) {
+            controllerRef.current?.toggleEquipment(item.item.id)
+          }
+        }}
+      >
+        {action}
+      </button>
+    )
+  }
+
   const renderSidebarContent = () => {
     switch (sidebarView) {
       case 'guide':
         return (
-          <div className="sidebar-stack">
-            <div className="hero-note">
-              <strong>Nearby</strong>
-              <p>{snapshot.interactionHint ?? 'Move toward labeled exits, checkpoints, villagers, or red hostile markers.'}</p>
-            </div>
-            <div className="legend-grid">
-              <div className="legend-item">
-                <span className="legend-swatch ally" />
-                <div>
-                  <strong>Allies</strong>
-                  <p>Teal markers and calm labels</p>
+          <div className="deck-stack">
+            <section className="deck-card accent">
+              <div className="deck-eyebrow">Objective Route</div>
+              <h3>{snapshot.nextStep}</h3>
+              <p>{snapshot.objectiveTarget.label ?? snapshot.objective}</p>
+            </section>
+            <section className="deck-card">
+              <div className="deck-eyebrow">Field Readout</div>
+              <div className="stat-grid">
+                <div className="stat-card">
+                  <span>HP</span>
+                  <strong>{snapshot.player ? `${snapshot.player.hp} / ${snapshot.player.maxHp}` : '--'}</strong>
+                </div>
+                <div className="stat-card">
+                  <span>Level</span>
+                  <strong>{snapshot.player ? `${snapshot.player.level} • XP ${snapshot.player.xp}` : '--'}</strong>
+                </div>
+                <div className="stat-card">
+                  <span>Attack</span>
+                  <strong>{snapshot.player?.attack ?? '--'}</strong>
+                </div>
+                <div className="stat-card">
+                  <span>Gold</span>
+                  <strong>{snapshot.player?.gold ?? '--'}</strong>
                 </div>
               </div>
-              <div className="legend-item">
-                <span className="legend-swatch foe" />
-                <div>
-                  <strong>Enemies</strong>
-                  <p>Red rings and danger labels</p>
+            </section>
+            <section className="deck-card">
+              <div className="deck-eyebrow">Nearby</div>
+              <p>{snapshot.interactionHint ?? 'Keep moving toward the marked route or nearby villagers.'}</p>
+            </section>
+            {showShortcuts ? (
+              <section className="deck-card">
+                <div className="deck-eyebrow">Command Sheet</div>
+                <div className="shortcut-list">
+                  {KEYBOARD_GUIDE.map((entry) => (
+                    <div key={entry.key} className="shortcut-row">
+                      <span className="shortcut-key">{entry.key}</span>
+                      <span>{entry.description}</span>
+                    </div>
+                  ))}
                 </div>
-              </div>
-              <div className="legend-item">
-                <span className="legend-swatch exit" />
-                <div>
-                  <strong>Exits</strong>
-                  <p>Amber gate zones advance the route</p>
-                </div>
-              </div>
-              <div className="legend-item">
-                <span className="legend-swatch checkpoint" />
-                <div>
-                  <strong>Checkpoints</strong>
-                  <p>Mint zones become respawn anchors</p>
-                </div>
-              </div>
-            </div>
+              </section>
+            ) : null}
           </div>
         )
       case 'quests':
         return (
-          <ul className="quest-list compact">
+          <ul className="panel-list">
             {snapshot.quests.length > 0 ? (
               snapshot.quests.map((quest) => (
-                <li key={quest.quest.id} className="quest-item">
-                  <strong>{quest.quest.name}</strong>
-                  <p className="panel-copy">{quest.currentStage?.title ?? quest.quest.summary}</p>
-                  <p className="panel-muted">{quest.currentStage?.description ?? quest.quest.summary}</p>
-                  <span className={`quest-status${quest.progress.status === 'complete' ? ' complete' : ''}`}>
-                    {renderQuestStatus(quest)}
-                  </span>
+                <li key={quest.quest.id} className="panel-item">
+                  <div className="panel-item-head">
+                    <strong>{quest.quest.name}</strong>
+                    <span className={`status-tag ${quest.progress.status}`}>{renderQuestStatus(quest)}</span>
+                  </div>
+                  <p>{quest.currentStage?.title ?? quest.quest.summary}</p>
+                  <p className="muted-copy">{quest.currentStage?.description ?? quest.quest.summary}</p>
                 </li>
               ))
             ) : (
-              <li className="quest-item">Speak with Elder Mira to take the frontier quest.</li>
+              <li className="panel-item">
+                <strong>No active quests yet</strong>
+                <p className="muted-copy">Speak with Elder Mira to begin the frontier watch.</p>
+              </li>
             )}
           </ul>
         )
       case 'inventory':
         return (
-          <div className="sidebar-stack">
-            <div className="hero-note subtle">
-              <strong>Inventory Shortcuts</strong>
-              <p>Press J/K to move the selection and Enter to use or equip the highlighted item.</p>
-            </div>
-            <ul className="inventory-list compact">
-              {snapshot.inventory.map((entry, index) => (
-                <li
-                  key={entry.item.id}
-                  className={`inventory-item${index === clampedInventoryIndex ? ' selected' : ''}`}
-                >
-                  <div className="inventory-head">
-                    <strong>{entry.item.name}</strong>
-                    <span className="tag">x{entry.quantity}</span>
-                  </div>
-                  <p className="panel-muted">{entry.item.description}</p>
-                  <div className="inventory-actions">
-                    <span className={`tag${entry.equipped ? ' equipped-tag' : ''}`}>
-                      {entry.equipped ? 'Equipped' : entry.item.type}
-                    </span>
-                    {renderItemAction(entry) ? <span className="tag action-tag">{renderItemAction(entry)}</span> : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
+          <ul className="panel-list">
+            {snapshot.inventory.map((entry, index) => (
+              <li key={entry.item.id} className={`panel-item ${index === clampedInventoryIndex ? 'selected' : ''}`}>
+                <div className="panel-item-head">
+                  <strong>{entry.item.name}</strong>
+                  <span className="status-tag neutral">x{entry.quantity}</span>
+                </div>
+                <p>{entry.item.description}</p>
+                <div className="inline-actions">
+                  <span className={`status-tag ${entry.equipped ? 'complete' : 'neutral'}`}>
+                    {entry.equipped ? 'Equipped' : entry.item.type}
+                  </span>
+                  {renderInventoryAction(entry)}
+                </div>
+              </li>
+            ))}
+          </ul>
         )
       case 'log':
         return (
-          <ul className="notification-list compact">
-            {snapshot.notifications.map((note, index) => (
-              <li key={`${note}-${index}`} className="notification-item">
-                <strong>Log {snapshot.notifications.length - index}</strong>
-                <div>{note}</div>
+          <ul className="panel-list">
+            {snapshot.notifications.map((note) => (
+              <li key={note.id} className="panel-item">
+                <div className="panel-item-head">
+                  <strong>{renderNotificationKind(note)}</strong>
+                  <span className="status-tag neutral">{new Date(note.occurredAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                </div>
+                <p>{renderNotificationText(note)}</p>
               </li>
             ))}
           </ul>
@@ -407,46 +477,79 @@ function App() {
   return (
     <main className="app-shell">
       <div className="app-frame">
-        <header className="masthead">
-          <div className="title-block">
-            <p>Keyboard-first browser RPG vertical slice</p>
-            <h1>Emberfall Frontier</h1>
-          </div>
-          <div className="status-strip">
-            <div className="header-actions">
-              <div className="status-chip">Single-player React + Phaser</div>
-              <button type="button" className="shortcut-chip" onClick={() => setShowShortcuts((current) => !current)}>
-                Ctrl+, Keys
-              </button>
+        <header className="top-hud">
+          <div className="brand-cluster">
+            <div className="brand-mark">EF</div>
+            <div>
+              <p className="eyebrow">Keyboard-first frontier RPG</p>
+              <h1>Emberfall Frontier</h1>
             </div>
-            <p>Three connected maps, no mouse required, larger playfield, cleaner HUD.</p>
+          </div>
+          <div className="hud-strip">
+            <div className="hud-chip">
+              <span>Location</span>
+              <strong>{snapshot.locationName}</strong>
+            </div>
+            <div className="hud-chip wide">
+              <span>Objective</span>
+              <strong>{snapshot.nextStep}</strong>
+            </div>
+            <div className="hud-chip">
+              <span>Save Status</span>
+              <strong>{formatSaveStatus(snapshot.saveStatus)}</strong>
+            </div>
+            <button type="button" className="pill-button secondary" onClick={() => setShowShortcuts((current) => !current)}>
+              {showShortcuts ? 'Hide Help' : 'Show Help'}
+            </button>
           </div>
         </header>
 
         <div className="experience-grid">
           <section className="game-column">
-            <section className="mission-bar">
-              <div className="mission-pill">
-                <strong>Location</strong>
-                <span>{snapshot.locationName}</span>
+            <div className="game-toolbar">
+              <div className="autosave-note">
+                <span>Autosave live</span>
+                <strong>Travel, quest beats, checkpoints, and loot update automatically.</strong>
               </div>
-              <div className="mission-pill emphasized">
-                <strong>Next</strong>
-                <span>{snapshot.nextStep}</span>
+              <div className="quick-actions">
+                <button type="button" className="pill-button primary" onClick={() => controllerRef.current?.attackNearby()}>
+                  Attack
+                </button>
+                <button
+                  type="button"
+                  className="pill-button secondary"
+                  onClick={() => controllerRef.current?.useItem('potion')}
+                  disabled={potionCount <= 0}
+                >
+                  Heal {potionCount > 0 ? `(${potionCount})` : ''}
+                </button>
+                <button type="button" className="pill-button secondary" onClick={() => controllerRef.current?.saveGame()}>
+                  Save Now
+                </button>
               </div>
-              <div className="mission-pill">
-                <strong>Save</strong>
-                <span>{formatSaveTime(snapshot.lastSavedAt)}</span>
-              </div>
-            </section>
+            </div>
 
-            <section className="panel game-panel">
+            <section className="game-panel">
               <div className="game-stage">
                 <div ref={hostRef} className="game-canvas" />
+                <div className="stage-overlay top">
+                  <div className="stage-card objective">
+                    <span className="eyebrow">Route</span>
+                    <strong>{snapshot.nextStep}</strong>
+                    <p>{snapshot.objectiveTarget.label ?? snapshot.objective}</p>
+                  </div>
+                </div>
+                <div className="stage-overlay bottom">
+                  <div className="stage-status-row">
+                    <div className="stage-pill">{snapshot.saveStatus.kind === 'manual' ? 'Manual save ready' : 'Autosave active'}</div>
+                    <div className="stage-pill muted">{snapshot.interactionHint ?? 'Stay on route.'}</div>
+                    {lowHealth ? <div className="stage-pill danger">Low health: use a tonic or find Iora.</div> : null}
+                  </div>
+                </div>
 
                 {error ? (
                   <div className="overlay">
-                    <div className="overlay-card error-card">
+                    <div className="overlay-card error">
                       <h2>Content Error</h2>
                       <p>{error}</p>
                     </div>
@@ -455,10 +558,9 @@ function App() {
 
                 {!content && !error ? (
                   <div className="overlay">
-                    <div className="loading-state">
-                      <div className="spinner" />
+                    <div className="overlay-card">
                       <h2>Loading Emberfall</h2>
-                      <p>Fetching maps, dialogue, items, and encounter data.</p>
+                      <p>Gathering maps, dialogue, combat data, and the frontier field deck.</p>
                     </div>
                   </div>
                 ) : null}
@@ -466,23 +568,16 @@ function App() {
                 {snapshot.screen === 'title' ? (
                   <div className="overlay">
                     <div className="overlay-card">
-                      <h2>Stand Watch Over Emberfall</h2>
-                      <p>
-                        Travel from the town square into the Greenwild, descend into the Ashen Ruin, recover the
-                        Sunstone, and return before the frontier breaks.
-                      </p>
-                      <p className="panel-muted">Keyboard: `Enter` or `N` starts a new run. `C` continues. `Ctrl+,` opens controls.</p>
-                      <div className="overlay-actions">
-                        <button
-                          type="button"
-                          className="primary-button"
-                          onClick={() => controllerRef.current?.startNewGame()}
-                        >
+                      <span className="eyebrow">Stand Watch Over Emberfall</span>
+                      <h2>Three maps. One relic. One clean run.</h2>
+                      <p>Start a fresh watch, cross the Greenwild, descend into the Ashen Ruin, and bring the Sunstone home.</p>
+                      <div className="inline-actions">
+                        <button type="button" className="pill-button primary" onClick={() => controllerRef.current?.startNewGame()}>
                           New Game
                         </button>
                         <button
                           type="button"
-                          className="secondary-button"
+                          className="pill-button secondary"
                           onClick={() => controllerRef.current?.continueGame()}
                           disabled={!snapshot.canContinue}
                         >
@@ -496,144 +591,102 @@ function App() {
                 {dialogue ? (
                   <div className="dialogue-overlay">
                     <div className="dialogue-card">
-                      <div className="dialogue-speaker">
+                      <div className="dialogue-head">
                         <span className="speaker-pill">{dialogue.node.speaker}</span>
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={() => controllerRef.current?.closeDialogue()}
-                        >
+                        <button type="button" className="pill-button secondary" onClick={() => controllerRef.current?.closeDialogue()}>
                           Close
                         </button>
                       </div>
                       <h3>{snapshot.locationName}</h3>
-                      <p className="dialogue-text">{dialogue.node.text}</p>
+                      <p>{dialogue.node.text}</p>
                       <div className="dialogue-actions">
                         {dialogue.node.options.map((option, index) => (
                           <button
                             key={option.id}
                             type="button"
-                            className={index === activeDialogueIndex ? 'primary-button selected-option' : 'secondary-button'}
+                            className={`choice-button ${index === activeDialogueIndex ? 'selected' : ''}`}
                             onClick={() => controllerRef.current?.chooseDialogueOption(option.id)}
                           >
                             {index + 1}. {option.label}
                           </button>
                         ))}
                       </div>
-                      <p className="panel-muted">Keyboard: `J/K` or arrow keys move, `Enter` selects, `Esc` closes.</p>
                     </div>
                   </div>
                 ) : null}
               </div>
             </section>
-
           </section>
 
-          <aside className="sidebar">
-            <section className="panel sidebar-panel">
-              <div className="toolbar">
+          <aside className="field-deck">
+            <section className="deck-shell">
+              <div className="deck-head">
                 <div>
-                  <h2>Field Deck</h2>
-                  <p className="panel-copy">{snapshot.nextStep}</p>
+                  <p className="eyebrow">Field Deck</p>
+                  <h2>{snapshot.objectiveTarget.kind === 'none' ? 'Frontier Secure' : 'Active Route'}</h2>
                 </div>
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => controllerRef.current?.saveGame()}
-                  disabled={snapshot.screen !== 'playing'}
-                >
-                  Save
+                <button type="button" className="pill-button secondary" onClick={() => controllerRef.current?.saveGame()} disabled={snapshot.screen !== 'playing'}>
+                  Save Now
                 </button>
               </div>
 
-              {showShortcuts ? (
-                <section className="shortcut-sheet">
-                  <div className="shortcut-sheet-head">
-                    <strong>Command Sheet</strong>
-                    <span className="tag">Toggle with Ctrl+,</span>
-                  </div>
-                  <div className="shortcut-grid">
-                    {KEYBOARD_GUIDE.map((entry) => (
-                      <div key={entry.key} className="shortcut-row">
-                        <span className="shortcut-key">{entry.key}</span>
-                        <span className="shortcut-text">{entry.description}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
+              <div className="deck-summary">
+                <div className="summary-chip">
+                  <span>Target</span>
+                  <strong>{snapshot.objectiveTarget.kind === 'none' ? 'Free roam' : snapshot.objectiveTarget.kind}</strong>
+                </div>
+                <div className="summary-chip">
+                  <span>Autosave</span>
+                  <strong>{snapshot.saveStatus.kind === 'manual' ? 'Manual locked' : 'Live'}</strong>
+                </div>
+              </div>
 
-              {snapshot.player ? (
-                <>
-                  <div className="stats-grid">
-                    <div className="stat-tile">
-                      <strong>HP</strong>
-                      <span>
-                        {snapshot.player.hp} / {snapshot.player.maxHp}
-                      </span>
-                    </div>
-                    <div className="stat-tile">
-                      <strong>Level</strong>
-                      <span>
-                        {snapshot.player.level} · XP {snapshot.player.xp}
-                      </span>
-                    </div>
-                    <div className="stat-tile">
-                      <strong>Attack</strong>
-                      <span>{snapshot.player.attack}</span>
-                    </div>
-                    <div className="stat-tile">
-                      <strong>Defense</strong>
-                      <span>{snapshot.player.defense}</span>
-                    </div>
-                    <div className="stat-tile">
-                      <strong>Weapon</strong>
-                      <span>{snapshot.player.weaponName ?? 'Unarmed'}</span>
-                    </div>
-                    <div className="stat-tile">
-                      <strong>Gold</strong>
-                      <span>{snapshot.player.gold}</span>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <p className="panel-muted">Start a run to initialize the party state.</p>
-              )}
               <div className="tab-row" role="tablist" aria-label="Field deck panels">
-                <button
-                  type="button"
-                  className={`tab-button${sidebarView === 'guide' ? ' active' : ''}`}
-                  onClick={() => setSidebarView('guide')}
-                >
-                  1 Guide
+                <button type="button" className={`tab-button${sidebarView === 'guide' ? ' active' : ''}`} onClick={() => setSidebarView('guide')}>
+                  Guide
                 </button>
-                <button
-                  type="button"
-                  className={`tab-button${sidebarView === 'quests' ? ' active' : ''}`}
-                  onClick={() => setSidebarView('quests')}
-                >
-                  2 Quest
+                <button type="button" className={`tab-button${sidebarView === 'quests' ? ' active' : ''}`} onClick={() => setSidebarView('quests')}>
+                  Quest
                 </button>
-                <button
-                  type="button"
-                  className={`tab-button${sidebarView === 'inventory' ? ' active' : ''}`}
-                  onClick={() => setSidebarView('inventory')}
-                >
-                  3 Pack
+                <button type="button" className={`tab-button${sidebarView === 'inventory' ? ' active' : ''}`} onClick={() => setSidebarView('inventory')}>
+                  Pack
                 </button>
-                <button
-                  type="button"
-                  className={`tab-button${sidebarView === 'log' ? ' active' : ''}`}
-                  onClick={() => setSidebarView('log')}
-                >
-                  4 Log
+                <button type="button" className={`tab-button${sidebarView === 'log' ? ' active' : ''}`} onClick={() => setSidebarView('log')}>
+                  Log
                 </button>
               </div>
-              <div className="sidebar-content">{renderSidebarContent()}</div>
+
+              <div className="deck-content">{renderSidebarContent()}</div>
             </section>
           </aside>
         </div>
       </div>
+
+      {celebrationVisible && snapshot.celebration ? (
+        <div className="celebration-backdrop">
+          <div className="celebration-card">
+            <span className="eyebrow">Quest Complete</span>
+            <h2>{snapshot.celebration.title}</h2>
+            <p>{snapshot.celebration.summary}</p>
+            <ul className="reward-list">
+              {snapshot.celebration.rewards.map((reward) => (
+                <li key={reward}>{reward}</li>
+              ))}
+            </ul>
+            <div className="inline-actions">
+              <button type="button" className="pill-button primary" onClick={() => setSidebarView('inventory')}>
+                Review Pack
+              </button>
+              <button type="button" className="pill-button secondary" onClick={() => controllerRef.current?.saveGame()}>
+                Save Now
+              </button>
+              <button type="button" className="pill-button secondary" onClick={() => setHiddenCelebrationTitle(snapshot.celebration!.title)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }

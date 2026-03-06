@@ -1,4 +1,5 @@
 import type {
+  CelebrationView,
   ContentPack,
   EquipmentSlot,
   GameSnapshot,
@@ -6,6 +7,9 @@ import type {
   InventoryEntry,
   InventoryView,
   ItemData,
+  NotificationEntry,
+  NotificationKind,
+  ObjectiveTarget,
   PlayerView,
   QuestData,
   QuestProgress,
@@ -21,6 +25,12 @@ export function createLoadingSnapshot(): GameSnapshot {
     locationName: 'Loading',
     locationDescription: 'Gathering the Emberfall content pack.',
     nextStep: 'Assembling the frontier.',
+    saveStatus: {
+      kind: 'manual',
+      savedAt: null,
+    },
+    objectiveTarget: createEmptyObjectiveTarget(),
+    celebration: null,
     player: null,
     inventory: [],
     quests: [],
@@ -28,7 +38,6 @@ export function createLoadingSnapshot(): GameSnapshot {
     notifications: [],
     interactionHint: null,
     objective: 'Preparing the frontier.',
-    lastSavedAt: null,
   }
 }
 
@@ -39,18 +48,23 @@ export function createTitleSnapshot(canContinue: boolean): GameSnapshot {
     locationName: 'Emberfall Frontier',
     locationDescription: 'A lone settlement holds the road against the Ashen Ruin.',
     nextStep: canContinue ? 'Press Enter to continue, or press N to begin a new run.' : 'Press Enter or N to start a new run.',
+    saveStatus: {
+      kind: 'manual',
+      savedAt: null,
+    },
+    objectiveTarget: createEmptyObjectiveTarget(),
+    celebration: null,
     player: null,
     inventory: [],
     quests: [],
     dialogue: null,
     notifications: [
-      'Move with WASD or arrow keys.',
-      'Press E near villagers to talk.',
-      'Press Space to strike nearby enemies.',
+      createNotificationEntry('Move with WASD or arrow keys.', 'system'),
+      createNotificationEntry('Press E near villagers to talk.', 'system'),
+      createNotificationEntry('Press Space to strike nearby enemies.', 'system'),
     ],
     interactionHint: null,
     objective: 'Begin a new expedition or continue your last watch.',
-    lastSavedAt: null,
   }
 }
 
@@ -92,7 +106,7 @@ export function createInitialGameState(content: ContentPack): GameState {
     questProgress,
     flags: {},
     defeatedEnemyIds: [],
-    notifications: ['You arrive in Emberfall as the bells announce dusk.'],
+    notifications: [createNotificationEntry('You arrive in Emberfall as the bells announce dusk.', 'system')],
     saveMeta: null,
   }
 }
@@ -101,8 +115,35 @@ export function cloneGameState(state: GameState): GameState {
   return structuredClone(state)
 }
 
-export function pushNotification(state: GameState, message: string): void {
-  state.notifications = [message, ...state.notifications].slice(0, 8)
+interface NotificationOptions {
+  kind?: NotificationKind
+  dedupeKey?: string
+  collapseWindowMs?: number
+}
+
+export function pushNotification(state: GameState, message: string, options: NotificationOptions = {}): void {
+  const entry = createNotificationEntry(message, options.kind ?? 'system', options.dedupeKey)
+  const previous = state.notifications[0]
+  const collapseWindowMs = options.collapseWindowMs ?? 2200
+
+  if (
+    previous &&
+    entry.dedupeKey &&
+    previous.dedupeKey === entry.dedupeKey &&
+    entry.occurredAt - previous.occurredAt <= collapseWindowMs
+  ) {
+    state.notifications = [
+      {
+        ...previous,
+        count: previous.count + 1,
+        occurredAt: entry.occurredAt,
+      },
+      ...state.notifications.slice(1, 8),
+    ]
+    return
+  }
+
+  state.notifications = [entry, ...state.notifications].slice(0, 8)
 }
 
 export function getItemQuantity(state: GameState, itemId: string): number {
@@ -301,6 +342,99 @@ export function getNextStep(state: GameState, content: ContentPack): string {
   return 'Find Elder Mira in the Council Hall and press E to return the Sunstone.'
 }
 
+export function getSaveStatus(state: GameState) {
+  return {
+    kind: state.saveMeta?.kind ?? 'manual',
+    savedAt: state.saveMeta?.savedAt ?? null,
+  } as const
+}
+
+export function getObjectiveTarget(state: GameState, content: ContentPack): ObjectiveTarget {
+  const mainQuest = content.quests.ember_relic
+  const progress = ensureQuestProgress(state, mainQuest.id)
+  const recovered = state.flags.sunstone_recovered ?? false
+
+  if (progress.status === 'not_started') {
+    return {
+      kind: 'npc',
+      mapId: 'town',
+      targetId: 'elder_mira',
+      label: 'Elder Mira has the first briefing.',
+    }
+  }
+
+  if (progress.status === 'complete') {
+    return createEmptyObjectiveTarget()
+  }
+
+  if (!recovered) {
+    if (state.currentMapId === 'town') {
+      return {
+        kind: 'exit',
+        mapId: 'town',
+        targetId: 'to_wilds',
+        label: 'Follow the East Road gate out of Emberfall.',
+      }
+    }
+
+    if (state.currentMapId === 'wilds') {
+      return {
+        kind: 'exit',
+        mapId: 'wilds',
+        targetId: 'to_dungeon',
+        label: 'Push east to the Ashen Ruin gate.',
+      }
+    }
+
+    return {
+      kind: 'enemy',
+      mapId: 'dungeon',
+      targetId: 'guardian',
+      label: 'Defeat the Ashen Guardian in the Sunstone Vault.',
+    }
+  }
+
+  if (state.currentMapId === 'dungeon') {
+    return {
+      kind: 'exit',
+      mapId: 'dungeon',
+      targetId: 'to_wilds',
+      label: 'Retreat west to the Greenwild.',
+    }
+  }
+
+  if (state.currentMapId === 'wilds') {
+    return {
+      kind: 'exit',
+      mapId: 'wilds',
+      targetId: 'to_town',
+      label: 'Head west and return to Emberfall.',
+    }
+  }
+
+  return {
+    kind: 'npc',
+    mapId: 'town',
+    targetId: 'elder_mira',
+    label: 'Bring the Sunstone back to Elder Mira.',
+  }
+}
+
+export function getCelebration(state: GameState, content: ContentPack): CelebrationView | null {
+  const mainQuest = content.quests.ember_relic
+  const progress = ensureQuestProgress(state, mainQuest.id)
+
+  if (progress.status !== 'complete' || !(state.flags.sunstone_returned ?? false)) {
+    return null
+  }
+
+  return {
+    title: 'The Town Endures',
+    summary: 'The Sunstone is home again, the wards are steady, and Emberfall can breathe through the night.',
+    rewards: [`+${mainQuest.reward.gold} gold`, `+${mainQuest.reward.xp} XP`, 'Ward Charm added to your pack'],
+  }
+}
+
 export function awardXp(state: GameState, amount: number): string[] {
   const messages: string[] = []
   state.player.xp += amount
@@ -324,5 +458,25 @@ function clearEquipmentIfMissing(state: GameState, itemId: string): void {
   }
   if (state.equipment.armor === itemId) {
     state.equipment.armor = undefined
+  }
+}
+
+export function createEmptyObjectiveTarget(): ObjectiveTarget {
+  return {
+    kind: 'none',
+    mapId: null,
+    targetId: null,
+    label: null,
+  }
+}
+
+function createNotificationEntry(message: string, kind: NotificationKind, dedupeKey?: string): NotificationEntry {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    message,
+    kind,
+    count: 1,
+    dedupeKey,
+    occurredAt: Date.now(),
   }
 }

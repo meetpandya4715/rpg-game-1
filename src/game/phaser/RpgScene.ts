@@ -6,13 +6,16 @@ import {
   cloneGameState,
   createTitleSnapshot,
   ensureQuestProgress,
+  getCelebration,
   getCurrentObjective,
   getDerivedStats,
   getInventoryViews,
+  getItemQuantity,
   getNextStep,
+  getObjectiveTarget,
   getPlayerView,
   getQuestViews,
-  getItemQuantity,
+  getSaveStatus,
   healPlayer,
   isEquipped,
   pushNotification,
@@ -32,8 +35,10 @@ import type {
   MapData,
   MapExit,
   NpcData,
+  ObjectiveTarget,
   PlayerView,
   RectArea,
+  SaveKind,
 } from '../types'
 
 type RectSprite = Phaser.GameObjects.Rectangle & {
@@ -49,6 +54,10 @@ interface EnemyRuntime {
   homeX: number
   homeY: number
   lastAttackAt: number
+  hpTrack: Phaser.GameObjects.Rectangle
+  hpFill: Phaser.GameObjects.Rectangle
+  marker: Phaser.GameObjects.Text
+  hpBarWidth: number
 }
 
 interface NpcRuntime {
@@ -56,7 +65,25 @@ interface NpcRuntime {
   sprite: Phaser.GameObjects.Rectangle
   label: Phaser.GameObjects.Text
   ring: Phaser.GameObjects.Arc
+  marker: Phaser.GameObjects.Text
 }
+
+interface ExitRuntime {
+  data: MapExit
+  zone: Phaser.GameObjects.Rectangle
+  label: Phaser.GameObjects.Text
+  beacon: Phaser.GameObjects.Triangle
+}
+
+interface BossBarRuntime {
+  frame: Phaser.GameObjects.Rectangle
+  fill: Phaser.GameObjects.Rectangle
+  label: Phaser.GameObjects.Text
+  sublabel: Phaser.GameObjects.Text
+  width: number
+}
+
+type DirectionKey = 'left' | 'right' | 'up' | 'down'
 
 function toColor(hex: string): number {
   return Phaser.Display.Color.HexStringToColor(hex).color
@@ -78,6 +105,25 @@ function normalizeVelocity(deltaX: number, deltaY: number, speed: number): { x: 
   }
 }
 
+function matchesDirectionKey(key: string): DirectionKey | null {
+  switch (key) {
+    case 'arrowleft':
+    case 'a':
+      return 'left'
+    case 'arrowright':
+    case 'd':
+      return 'right'
+    case 'arrowup':
+    case 'w':
+      return 'up'
+    case 'arrowdown':
+    case 's':
+      return 'down'
+    default:
+      return null
+  }
+}
+
 export class RpgScene extends Phaser.Scene {
   private readonly controller: GameController
   private readonly content: ContentPack
@@ -90,19 +136,64 @@ export class RpgScene extends Phaser.Scene {
   private mapObjects: Phaser.GameObjects.GameObject[] = []
   private enemyRuntimes: EnemyRuntime[] = []
   private npcRuntimes: NpcRuntime[] = []
+  private exitRuntimes: ExitRuntime[] = []
+  private bossBar: BossBarRuntime | null = null
   private activeDialogue: { npcId: string; nodeId: string } | null = null
   private interactionHint: string | null = null
   private lastPlayerAttackAt = 0
   private damageInvulnerableUntil = 0
   private interactionCooldownUntil = 0
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
-  private keys!: {
-    W: Phaser.Input.Keyboard.Key
-    A: Phaser.Input.Keyboard.Key
-    S: Phaser.Input.Keyboard.Key
-    D: Phaser.Input.Keyboard.Key
-    E: Phaser.Input.Keyboard.Key
-    SPACE: Phaser.Input.Keyboard.Key
+  private movementState: Record<DirectionKey, boolean> = {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+  }
+  private queuedInteract = false
+  private queuedAttack = false
+  private readonly handleWindowKeyDown = (event: KeyboardEvent) => {
+    if (!this.state || this.activeDialogue || event.metaKey || event.ctrlKey || event.altKey) {
+      return
+    }
+
+    const key = event.key.toLowerCase()
+    const direction = matchesDirectionKey(key)
+    if (direction) {
+      this.movementState[direction] = true
+      event.preventDefault()
+      return
+    }
+
+    if (key === 'e' && !event.repeat) {
+      this.queuedInteract = true
+      event.preventDefault()
+      return
+    }
+
+    if ((key === ' ' || event.code === 'Space') && !event.repeat) {
+      this.queuedAttack = true
+      event.preventDefault()
+    }
+  }
+  private readonly handleWindowKeyUp = (event: KeyboardEvent) => {
+    const direction = matchesDirectionKey(event.key.toLowerCase())
+    if (!direction) {
+      return
+    }
+    this.movementState[direction] = false
+  }
+  private readonly clearGameplayInput = () => {
+    this.movementState.left = false
+    this.movementState.right = false
+    this.movementState.up = false
+    this.movementState.down = false
+    this.queuedInteract = false
+    this.queuedAttack = false
+  }
+  private readonly handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') {
+      this.clearGameplayInput()
+    }
   }
 
   constructor(controller: GameController, content: ContentPack) {
@@ -112,9 +203,18 @@ export class RpgScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cursors = this.input.keyboard!.createCursorKeys()
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,E,SPACE') as typeof this.keys
     this.cameras.main.setRoundPixels(true)
+    window.addEventListener('keydown', this.handleWindowKeyDown)
+    window.addEventListener('keyup', this.handleWindowKeyUp)
+    window.addEventListener('blur', this.clearGameplayInput)
+    document.addEventListener('visibilitychange', this.handleVisibilityChange)
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener('keydown', this.handleWindowKeyDown)
+      window.removeEventListener('keyup', this.handleWindowKeyUp)
+      window.removeEventListener('blur', this.clearGameplayInput)
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange)
+      this.clearGameplayInput()
+    })
     this.controller.registerScene(this)
   }
 
@@ -126,16 +226,18 @@ export class RpgScene extends Phaser.Scene {
     const hasDialogue = Boolean(this.activeDialogue)
     this.updatePlayerMovement(hasDialogue)
     this.updateEnemies(delta)
-    this.handleInteractableHint()
 
-    if (!hasDialogue && Phaser.Input.Keyboard.JustDown(this.keys.E)) {
+    if (!hasDialogue && this.queuedInteract) {
+      this.queuedInteract = false
       this.tryInteract()
     }
 
-    if (!hasDialogue && Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) {
+    if (!hasDialogue && this.queuedAttack) {
+      this.queuedAttack = false
       this.tryAttack()
     }
 
+    this.syncInteractionHint()
     this.checkAreaInteractions()
   }
 
@@ -144,8 +246,9 @@ export class RpgScene extends Phaser.Scene {
     this.activeDialogue = null
     this.lastPlayerAttackAt = 0
     this.damageInvulnerableUntil = 0
+    this.clearGameplayInput()
     clampPlayerHp(this.state, this.content)
-    pushNotification(this.state, 'The watch resumes.')
+    pushNotification(this.state, 'The watch resumes.', { kind: 'system' })
     this.checkpointState = cloneGameState(this.state)
     this.renderCurrentMap()
     this.publishSnapshot()
@@ -156,7 +259,7 @@ export class RpgScene extends Phaser.Scene {
       return
     }
 
-    this.persistState(true, 'Game saved to the ember archive.')
+    this.persistState('manual', 'Manual save secured at the frontier board.')
     this.publishSnapshot()
   }
 
@@ -175,9 +278,16 @@ export class RpgScene extends Phaser.Scene {
     }
 
     const restored = healPlayer(this.state, this.content, item.healAmount)
-    pushNotification(this.state, `${item.name} restores ${restored} HP.`)
-    this.persistState(false)
+    pushNotification(this.state, `${item.name} restores ${restored} HP.`, {
+      kind: 'loot',
+      dedupeKey: `${itemId}-restored-${restored}`,
+    })
+    this.persistState('auto')
     this.publishSnapshot()
+  }
+
+  attackNearby(): void {
+    this.tryAttack()
   }
 
   toggleEquipment(itemId: string): void {
@@ -192,9 +302,12 @@ export class RpgScene extends Phaser.Scene {
 
     const slot = toggleEquippedState(this.state, item)
     const action = isEquipped(this.state, itemId) ? 'equipped' : 'stowed'
-    pushNotification(this.state, `${item.name} ${action}${slot ? ` as ${slot}` : ''}.`)
+    pushNotification(this.state, `${item.name} ${action}${slot ? ` as ${slot}` : ''}.`, {
+      kind: 'system',
+      dedupeKey: `${itemId}-${action}`,
+    })
     clampPlayerHp(this.state, this.content)
-    this.persistState(false)
+    this.persistState('auto')
     this.publishSnapshot()
   }
 
@@ -220,11 +333,11 @@ export class RpgScene extends Phaser.Scene {
         npcId: this.activeDialogue.npcId,
         nodeId: option.nextId,
       }
-    } else if (option.close || !option.nextId) {
+    } else {
       this.activeDialogue = null
     }
 
-    this.persistState(false)
+    this.persistState('auto')
     this.publishSnapshot()
   }
 
@@ -255,22 +368,22 @@ export class RpgScene extends Phaser.Scene {
 
     const base = this.add.rectangle(0, 0, map.width, map.height, toColor(map.backgroundColor)).setOrigin(0)
     const glow = this.add
-      .rectangle(map.width / 2, map.height / 2, map.width - 100, map.height - 100, toColor(map.accentColor), 0.16)
-      .setStrokeStyle(4, toColor(map.accentColor), 0.22)
+      .rectangle(map.width / 2, map.height / 2, map.width - 84, map.height - 84, toColor(map.accentColor), 0.15)
+      .setStrokeStyle(3, toColor(map.accentColor), 0.18)
     const title = this.add
-      .text(28, 20, map.name, {
-        fontFamily: 'Palatino Linotype, serif',
-        fontSize: '28px',
-        color: '#fff0d7',
+      .text(26, 20, map.name, {
+        fontFamily: '"Palatino Linotype", serif',
+        fontSize: '30px',
+        color: '#fff1d9',
       })
       .setScrollFactor(0)
       .setDepth(10)
     const subtitle = this.add
-      .text(28, 56, map.description, {
-        fontFamily: 'Trebuchet MS, sans-serif',
+      .text(26, 58, map.description, {
+        fontFamily: '"Trebuchet MS", sans-serif',
         fontSize: '14px',
-        color: '#d9c8ae',
-        wordWrap: { width: 360 },
+        color: '#dfcfb5',
+        wordWrap: { width: 320 },
       })
       .setScrollFactor(0)
       .setDepth(10)
@@ -282,7 +395,7 @@ export class RpgScene extends Phaser.Scene {
       const rect = this.add.rectangle(prop.x, prop.y, prop.width, prop.height, toColor(prop.color), prop.alpha ?? 1)
       if (prop.label) {
         const label = this.add.text(prop.x, prop.y, prop.label, {
-          fontFamily: 'Trebuchet MS, sans-serif',
+          fontFamily: '"Trebuchet MS", sans-serif',
           fontSize: '13px',
           color: '#fcead4',
         })
@@ -299,10 +412,10 @@ export class RpgScene extends Phaser.Scene {
           obstacle.y + obstacle.height / 2,
           obstacle.width,
           obstacle.height,
-          0x1d241f,
-          0.82,
+          0x17201c,
+          0.84,
         )
-        .setStrokeStyle(2, 0x3d463f, 0.44)
+        .setStrokeStyle(2, 0x33473d, 0.42)
 
       this.physics.add.existing(rect, true)
       this.obstacleGroup.add(rect)
@@ -310,33 +423,49 @@ export class RpgScene extends Phaser.Scene {
     }
 
     for (const exit of map.exits) {
-      const rect = this.add
+      const zone = this.add
         .rectangle(
           exit.area.x + exit.area.width / 2,
           exit.area.y + exit.area.height / 2,
           exit.area.width,
           exit.area.height,
-          0xffdc9b,
-          0.1,
+          0xffd08f,
+          0.12,
         )
-        .setStrokeStyle(2, 0xffdc9b, 0.28)
+        .setStrokeStyle(2, 0xffd08f, 0.26)
       const label = this.add
         .text(exit.area.x + exit.area.width / 2, exit.area.y + exit.area.height / 2, exit.label, {
-          fontFamily: 'Trebuchet MS, sans-serif',
+          fontFamily: '"Trebuchet MS", sans-serif',
           fontSize: '13px',
-          color: '#ffe7c1',
+          color: '#ffe8c2',
           align: 'center',
-          wordWrap: { width: 120 },
+          wordWrap: { width: 130 },
         })
         .setOrigin(0.5)
+      const beacon = this.add
+        .triangle(exit.area.x + exit.area.width / 2, exit.area.y + 34, 0, 22, 14, 0, 28, 22, 0xffe5a6, 0.95)
+        .setVisible(false)
+        .setDepth(3)
+
       this.tweens.add({
-        targets: rect,
-        alpha: { from: 0.1, to: 0.24 },
-        duration: 900,
+        targets: zone,
+        alpha: { from: 0.1, to: 0.22 },
+        duration: 920,
         yoyo: true,
         repeat: -1,
       })
-      this.mapObjects.push(rect, label)
+
+      this.tweens.add({
+        targets: beacon,
+        y: beacon.y - 10,
+        alpha: { from: 0.45, to: 0.95 },
+        duration: 760,
+        yoyo: true,
+        repeat: -1,
+      })
+
+      this.exitRuntimes.push({ data: exit, zone, label, beacon })
+      this.mapObjects.push(zone, label, beacon)
     }
 
     for (const checkpoint of map.checkpoints) {
@@ -356,7 +485,7 @@ export class RpgScene extends Phaser.Scene {
           checkpoint.area.y + checkpoint.area.height / 2,
           checkpoint.label,
           {
-            fontFamily: 'Trebuchet MS, sans-serif',
+            fontFamily: '"Trebuchet MS", sans-serif',
             fontSize: '12px',
             color: '#dcfff2',
             align: 'center',
@@ -377,8 +506,10 @@ export class RpgScene extends Phaser.Scene {
     this.createPlayer(spawn.x, spawn.y)
     this.spawnNpcs(map)
     this.spawnEnemies(map)
+    this.createBossBar()
     this.cameras.main.startFollow(this.player!, true, 1, 1)
-    this.publishSnapshot()
+    this.refreshObjectivePresentation()
+    this.interactionHint = this.computeInteractionHint()
   }
 
   private createPlayer(x: number, y: number): void {
@@ -409,13 +540,23 @@ export class RpgScene extends Phaser.Scene {
         .setStrokeStyle(2, 0x93f0d6, 0.7)
       const label = this.add
         .text(npc.x, npc.y - 30, npc.name, {
-          fontFamily: 'Trebuchet MS, sans-serif',
+          fontFamily: '"Trebuchet MS", sans-serif',
           fontSize: '12px',
           color: '#cbfff7',
         })
         .setOrigin(0.5)
-      this.npcRuntimes.push({ data: npc, sprite, label, ring })
-      this.mapObjects.push(ring, sprite, label)
+      const marker = this.add
+        .text(npc.x, npc.y - 52, 'QUEST', {
+          fontFamily: '"Trebuchet MS", sans-serif',
+          fontSize: '11px',
+          color: '#1b130e',
+          backgroundColor: '#ffd28b',
+          padding: { left: 7, right: 7, top: 3, bottom: 3 },
+        })
+        .setOrigin(0.5)
+        .setVisible(false)
+      this.npcRuntimes.push({ data: npc, sprite, label, ring, marker })
+      this.mapObjects.push(ring, sprite, label, marker)
     }
   }
 
@@ -425,7 +566,9 @@ export class RpgScene extends Phaser.Scene {
     )
 
     for (const enemy of enemies) {
-      const ring = this.add.circle(enemy.x, enemy.y, enemy.isBoss ? 24 : 19, 0xff8e7d, 0.12).setStrokeStyle(2, 0xff8e7d, 0.42)
+      const ring = this.add
+        .circle(enemy.x, enemy.y, enemy.isBoss ? 24 : 19, 0xff8e7d, 0.12)
+        .setStrokeStyle(2, 0xff8e7d, 0.42)
       const sprite = this.add
         .rectangle(enemy.x, enemy.y, enemy.isBoss ? 34 : 26, enemy.isBoss ? 34 : 26, toColor(enemy.color))
         .setStrokeStyle(2, 0xff8e7d, 0.85)
@@ -438,17 +581,37 @@ export class RpgScene extends Phaser.Scene {
 
       const label = this.add
         .text(enemy.x, enemy.y - 28, `! ${enemy.name}`, {
-          fontFamily: 'Trebuchet MS, sans-serif',
+          fontFamily: '"Trebuchet MS", sans-serif',
           fontSize: '11px',
           color: '#ffd1c9',
         })
         .setOrigin(0.5)
 
+      const hpBarWidth = enemy.isBoss ? 94 : 58
+      const hpTrack = this.add
+        .rectangle(enemy.x, enemy.y - 48, hpBarWidth, 8, 0x190f0f, 0.85)
+        .setStrokeStyle(1, 0xffb7a2, 0.18)
+        .setVisible(false)
+      const hpFill = this.add
+        .rectangle(enemy.x - hpBarWidth / 2, enemy.y - 48, hpBarWidth, 4, enemy.isBoss ? 0xff9d58 : 0xff8e7d, 0.96)
+        .setOrigin(0, 0.5)
+        .setVisible(false)
+      const marker = this.add
+        .text(enemy.x, enemy.y - 64, enemy.isBoss ? 'BOSS' : 'TARGET', {
+          fontFamily: '"Trebuchet MS", sans-serif',
+          fontSize: '10px',
+          color: '#1d130d',
+          backgroundColor: '#ffb98a',
+          padding: { left: 6, right: 6, top: 2, bottom: 2 },
+        })
+        .setOrigin(0.5)
+        .setVisible(false)
+
       this.tweens.add({
         targets: ring,
         alpha: { from: 0.12, to: 0.26 },
-        scaleX: { from: 1, to: 1.1 },
-        scaleY: { from: 1, to: 1.1 },
+        scaleX: { from: 1, to: enemy.isBoss ? 1.18 : 1.1 },
+        scaleY: { from: 1, to: enemy.isBoss ? 1.18 : 1.1 },
         duration: enemy.isBoss ? 560 : 860,
         yoyo: true,
         repeat: -1,
@@ -463,6 +626,10 @@ export class RpgScene extends Phaser.Scene {
         homeX: enemy.x,
         homeY: enemy.y,
         lastAttackAt: 0,
+        hpTrack,
+        hpFill,
+        marker,
+        hpBarWidth,
       }
 
       if (this.obstacleGroup) {
@@ -470,8 +637,52 @@ export class RpgScene extends Phaser.Scene {
       }
 
       this.enemyRuntimes.push(runtime)
-      this.mapObjects.push(ring, sprite, label)
+      this.mapObjects.push(ring, sprite, label, hpTrack, hpFill, marker)
     }
+  }
+
+  private createBossBar(): void {
+    const boss = this.enemyRuntimes.find((enemy) => enemy.data.isBoss)
+    if (!boss) {
+      return
+    }
+
+    const width = 220
+    const frame = this.add
+      .rectangle(480, 36, width, 30, 0x1b1113, 0.88)
+      .setStrokeStyle(1, 0xffc08d, 0.32)
+      .setScrollFactor(0)
+      .setDepth(20)
+      .setVisible(false)
+    const fill = this.add
+      .rectangle(370, 36, width - 24, 10, 0xff9d58, 0.95)
+      .setOrigin(0, 0.5)
+      .setScrollFactor(0)
+      .setDepth(21)
+      .setVisible(false)
+    const label = this.add
+      .text(480, 23, boss.data.name, {
+        fontFamily: '"Trebuchet MS", sans-serif',
+        fontSize: '12px',
+        color: '#ffe8cf',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(21)
+      .setVisible(false)
+    const sublabel = this.add
+      .text(480, 47, 'Sunstone Vault threat', {
+        fontFamily: '"Trebuchet MS", sans-serif',
+        fontSize: '10px',
+        color: '#d5bfa3',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(21)
+      .setVisible(false)
+
+    this.bossBar = { frame, fill, label, sublabel, width: width - 24 }
+    this.mapObjects.push(frame, fill, label, sublabel)
   }
 
   private updatePlayerMovement(hasDialogue: boolean): void {
@@ -485,12 +696,11 @@ export class RpgScene extends Phaser.Scene {
       return
     }
 
-    const left = this.cursors.left.isDown || this.keys.A.isDown
-    const right = this.cursors.right.isDown || this.keys.D.isDown
-    const up = this.cursors.up.isDown || this.keys.W.isDown
-    const down = this.cursors.down.isDown || this.keys.S.isDown
-
-    const velocity = normalizeVelocity(Number(right) - Number(left), Number(down) - Number(up), 185)
+    const velocity = normalizeVelocity(
+      Number(this.movementState.right) - Number(this.movementState.left),
+      Number(this.movementState.down) - Number(this.movementState.up),
+      185,
+    )
     body.setVelocity(velocity.x, velocity.y)
   }
 
@@ -501,6 +711,7 @@ export class RpgScene extends Phaser.Scene {
 
     const playerStats = getDerivedStats(this.state, this.content)
     const now = this.time.now
+    const objectiveTarget = this.getActiveObjectiveTarget()
 
     for (const enemy of this.enemyRuntimes) {
       const { sprite, data, label, ring } = enemy
@@ -523,6 +734,7 @@ export class RpgScene extends Phaser.Scene {
 
       label.setPosition(sprite.x, sprite.y - (data.isBoss ? 34 : 26))
       ring.setPosition(sprite.x, sprite.y)
+      this.updateEnemyHud(enemy, distance, objectiveTarget.targetId === data.id)
 
       if (distance < 34 && now >= enemy.lastAttackAt + data.attackCooldownMs && now >= this.damageInvulnerableUntil) {
         enemy.lastAttackAt = now
@@ -532,48 +744,88 @@ export class RpgScene extends Phaser.Scene {
       }
     }
 
+    this.updateBossBar(objectiveTarget)
     void delta
   }
 
-  private handleInteractableHint(): void {
-    if (!this.player || !this.currentMap || !this.state) {
+  private updateEnemyHud(enemy: EnemyRuntime, distance: number, isObjective: boolean): void {
+    const y = enemy.sprite.y - (enemy.data.isBoss ? 52 : 40)
+    enemy.hpTrack.setPosition(enemy.sprite.x, y)
+    enemy.hpFill.setPosition(enemy.sprite.x - enemy.hpBarWidth / 2, y)
+    enemy.hpFill.displayWidth = Math.max(0, enemy.hpBarWidth * (enemy.hp / enemy.data.maxHp))
+    enemy.marker.setPosition(enemy.sprite.x, y - 14)
+
+    const visible = enemy.hp < enemy.data.maxHp || distance < 145 || isObjective
+    enemy.hpTrack.setVisible(visible)
+    enemy.hpFill.setVisible(visible && enemy.hp > 0)
+    enemy.marker.setVisible(isObjective)
+    enemy.ring.setStrokeStyle(2, isObjective ? 0xffcf7a : 0xff8e7d, isObjective ? 0.72 : 0.42)
+  }
+
+  private updateBossBar(objectiveTarget: ObjectiveTarget): void {
+    if (!this.bossBar) {
       return
     }
 
-    const player = this.player
-    let nextHint: string | null = null
-    let closestNpc: NpcRuntime | null = null
-    let closestDistance = Number.POSITIVE_INFINITY
+    const boss = this.enemyRuntimes.find((enemy) => enemy.data.isBoss)
+    const visible = Boolean(boss) && this.currentMap?.id === boss?.data.mapId
+    this.bossBar.frame.setVisible(visible)
+    this.bossBar.fill.setVisible(visible)
+    this.bossBar.label.setVisible(visible)
+    this.bossBar.sublabel.setVisible(visible)
 
-    for (const npc of this.npcRuntimes) {
-      const distance = Phaser.Math.Distance.Between(player.x, player.y, npc.data.x, npc.data.y)
-      if (distance < 82 && distance < closestDistance) {
-        closestDistance = distance
-        closestNpc = npc
-      }
+    if (!visible || !boss) {
+      return
+    }
+
+    this.bossBar.fill.displayWidth = Math.max(0, this.bossBar.width * (boss.hp / boss.data.maxHp))
+    this.bossBar.label.setText(`${boss.data.name} ${objectiveTarget.targetId === boss.data.id ? '• Objective' : ''}`)
+  }
+
+  private computeInteractionHint(): string | null {
+    if (!this.player || !this.currentMap || !this.state) {
+      return null
     }
 
     const nearbyEnemy = this.enemyRuntimes
       .map((enemy) => ({
         enemy,
-        distance: Phaser.Math.Distance.Between(player.x, player.y, enemy.sprite.x, enemy.sprite.y),
+        distance: Phaser.Math.Distance.Between(this.player!.x, this.player!.y, enemy.sprite.x, enemy.sprite.y),
       }))
       .filter((entry) => entry.distance < 96)
       .sort((left, right) => left.distance - right.distance)[0]
 
     if (nearbyEnemy) {
-      nextHint = `${nearbyEnemy.enemy.data.name} is in range. Press Space to attack.`
-    } else if (closestNpc) {
-      nextHint = `Press E to speak with ${closestNpc.data.name}.`
-    } else {
-      for (const checkpoint of this.currentMap.checkpoints) {
-        if (isInside(checkpoint.area, player.x, player.y)) {
-          nextHint = `Checkpoint: ${checkpoint.label}.`
-          break
-        }
-      }
+      return `${nearbyEnemy.enemy.data.name} is in range. Press Space to strike.`
     }
 
+    const objectiveTarget = this.getActiveObjectiveTarget()
+    if (objectiveTarget.mapId === this.currentMap.id && objectiveTarget.label) {
+      return objectiveTarget.label
+    }
+
+    const closestNpc = this.npcRuntimes
+      .map((npc) => ({
+        npc,
+        distance: Phaser.Math.Distance.Between(this.player!.x, this.player!.y, npc.data.x, npc.data.y),
+      }))
+      .filter((entry) => entry.distance < 82)
+      .sort((left, right) => left.distance - right.distance)[0]
+
+    if (closestNpc) {
+      return `Press E to speak with ${closestNpc.npc.data.name}.`
+    }
+
+    const checkpoint = this.currentMap.checkpoints.find((entry) => isInside(entry.area, this.player!.x, this.player!.y))
+    if (checkpoint) {
+      return `Checkpoint active: ${checkpoint.label}.`
+    }
+
+    return 'Stay on the marked path and keep the field deck in sight.'
+  }
+
+  private syncInteractionHint(): void {
+    const nextHint = this.computeInteractionHint()
     if (nextHint !== this.interactionHint) {
       this.interactionHint = nextHint
       this.publishSnapshot()
@@ -634,17 +886,22 @@ export class RpgScene extends Phaser.Scene {
     })
 
     if (!target) {
+      this.spawnFloatingText(this.player.x, this.player.y - 36, 'Too far', '#ffe5bc')
       return
     }
 
     const damage = Math.max(1, playerStats.attack - Math.floor(target.enemy.data.defense / 2))
     target.enemy.hp -= damage
     target.enemy.sprite.setFillStyle(0xffe3c2, 1)
+    this.spawnFloatingText(target.enemy.sprite.x, target.enemy.sprite.y - 38, `-${damage}`, '#ffd28b')
     this.time.delayedCall(90, () => {
       target.enemy.sprite.setFillStyle(toColor(target.enemy.data.color), 1)
     })
 
-    pushNotification(this.state, `${target.enemy.data.name} takes ${damage} damage.`)
+    pushNotification(this.state, `${target.enemy.data.name} takes ${damage} damage.`, {
+      kind: 'combat',
+      dedupeKey: `${target.enemy.data.id}-damage-${damage}`,
+    })
 
     if (target.enemy.hp <= 0) {
       this.defeatEnemy(target.enemy)
@@ -690,8 +947,11 @@ export class RpgScene extends Phaser.Scene {
       spawnId: checkpoint.spawnId,
     }
 
-    pushNotification(this.state, `${checkpoint.label} is now your checkpoint.`)
-    this.persistState(false)
+    pushNotification(this.state, `${checkpoint.label} is now your checkpoint.`, {
+      kind: 'system',
+      dedupeKey: `checkpoint-${checkpoint.id}`,
+    })
+    this.persistState('auto')
     this.checkpointState = cloneGameState(this.state)
     this.publishSnapshot()
   }
@@ -708,10 +968,14 @@ export class RpgScene extends Phaser.Scene {
       mapId: exit.targetMapId,
       spawnId: exit.targetSpawnId,
     }
-    pushNotification(this.state, `You head toward ${this.content.maps[exit.targetMapId].name}.`)
-    this.persistState(false)
+    pushNotification(this.state, `You head toward ${this.content.maps[exit.targetMapId].name}.`, {
+      kind: 'quest',
+      dedupeKey: `travel-${exit.targetMapId}`,
+    })
+    this.persistState('auto')
     this.checkpointState = cloneGameState(this.state)
     this.renderCurrentMap()
+    this.publishSnapshot()
   }
 
   private resolveDialogueNode(npc: NpcData): string {
@@ -751,7 +1015,10 @@ export class RpgScene extends Phaser.Scene {
         if (progress.status === 'not_started') {
           progress.status = 'active'
           progress.stageId = quest.stages[0]?.id ?? null
-          pushNotification(this.state, `Quest started: ${quest.name}.`)
+          pushNotification(this.state, `Quest started: ${quest.name}.`, {
+            kind: 'quest',
+            dedupeKey: `quest-start-${quest.id}`,
+          })
         }
         break
       }
@@ -759,6 +1026,14 @@ export class RpgScene extends Phaser.Scene {
         const progress = ensureQuestProgress(this.state, action.questId)
         if (progress.status === 'active') {
           progress.stageId = action.stageId
+          const quest = this.content.quests[action.questId]
+          const stage = quest.stages.find((entry) => entry.id === action.stageId)
+          if (stage) {
+            pushNotification(this.state, `${quest.name}: ${stage.title}.`, {
+              kind: 'quest',
+              dedupeKey: `quest-stage-${quest.id}-${stage.id}`,
+            })
+          }
         }
         break
       }
@@ -770,13 +1045,19 @@ export class RpgScene extends Phaser.Scene {
           progress.stageId = quest.stages.at(-1)?.id ?? null
           this.state.player.gold += quest.reward.gold
           for (const message of awardXp(this.state, quest.reward.xp)) {
-            pushNotification(this.state, message)
+            pushNotification(this.state, message, { kind: 'quest', dedupeKey: message })
           }
           if (quest.reward.itemId) {
             addItem(this.state, quest.reward.itemId, 1)
-            pushNotification(this.state, `${this.content.items[quest.reward.itemId].name} joins your kit.`)
+            pushNotification(this.state, `${this.content.items[quest.reward.itemId].name} joins your kit.`, {
+              kind: 'loot',
+              dedupeKey: `reward-item-${quest.reward.itemId}`,
+            })
           }
-          pushNotification(this.state, `${quest.name} completed.`)
+          pushNotification(this.state, `${quest.name} completed.`, {
+            kind: 'quest',
+            dedupeKey: `quest-complete-${quest.id}`,
+          })
         }
         break
       }
@@ -786,7 +1067,10 @@ export class RpgScene extends Phaser.Scene {
       }
       case 'giveItem': {
         addItem(this.state, action.itemId, action.quantity)
-        pushNotification(this.state, `Received ${this.content.items[action.itemId].name}.`)
+        pushNotification(this.state, `Received ${this.content.items[action.itemId].name}.`, {
+          kind: 'loot',
+          dedupeKey: `item-${action.itemId}-received`,
+        })
         break
       }
       case 'removeItem': {
@@ -796,7 +1080,10 @@ export class RpgScene extends Phaser.Scene {
       case 'healPlayer': {
         const restored = healPlayer(this.state, this.content, action.amount, action.full)
         if (restored > 0) {
-          pushNotification(this.state, `Recovered ${restored} HP.`)
+          pushNotification(this.state, `Recovered ${restored} HP.`, {
+            kind: 'system',
+            dedupeKey: `recover-${restored}`,
+          })
         }
         break
       }
@@ -814,15 +1101,22 @@ export class RpgScene extends Phaser.Scene {
     this.state.player.gold += enemy.data.goldReward
 
     for (const message of awardXp(this.state, enemy.data.xpReward)) {
-      pushNotification(this.state, message)
+      pushNotification(this.state, message, { kind: 'quest', dedupeKey: message })
     }
 
-    pushNotification(this.state, `${enemy.data.name} falls.`)
+    pushNotification(this.state, `${enemy.data.name} falls.`, {
+      kind: 'combat',
+      dedupeKey: `enemy-fall-${enemy.data.id}`,
+    })
+    this.spawnFloatingText(enemy.sprite.x, enemy.sprite.y - 56, 'Defeated', '#ffb88e')
 
     for (const drop of enemy.data.loot) {
       if (Math.random() <= drop.chance) {
         addItem(this.state, drop.itemId, drop.quantity)
-        pushNotification(this.state, `Looted ${this.content.items[drop.itemId].name}.`)
+        pushNotification(this.state, `Looted ${this.content.items[drop.itemId].name}.`, {
+          kind: 'loot',
+          dedupeKey: `loot-${drop.itemId}`,
+        })
       }
     }
 
@@ -833,8 +1127,12 @@ export class RpgScene extends Phaser.Scene {
     enemy.sprite.destroy()
     enemy.label.destroy()
     enemy.ring.destroy()
+    enemy.hpTrack.destroy()
+    enemy.hpFill.destroy()
+    enemy.marker.destroy()
     this.enemyRuntimes = this.enemyRuntimes.filter((entry) => entry !== enemy)
-    this.persistState(false)
+    this.refreshObjectivePresentation()
+    this.persistState('auto')
     this.publishSnapshot()
   }
 
@@ -845,10 +1143,14 @@ export class RpgScene extends Phaser.Scene {
 
     this.state.player.hp = Math.max(0, this.state.player.hp - amount)
     this.player.setFillStyle(0xff9a91, 1)
+    this.spawnFloatingText(this.player.x, this.player.y - 42, `-${amount}`, '#ff9d91')
     this.time.delayedCall(120, () => {
       this.player?.setFillStyle(0xf7d7a6, 1)
     })
-    pushNotification(this.state, `You suffer ${amount} damage.`)
+    pushNotification(this.state, `You suffer ${amount} damage.`, {
+      kind: 'combat',
+      dedupeKey: `player-damage-${amount}`,
+    })
 
     if (this.state.player.hp === 0) {
       this.restoreCheckpoint()
@@ -865,10 +1167,70 @@ export class RpgScene extends Phaser.Scene {
 
     const restored = cloneGameState(this.checkpointState)
     restored.player.hp = getDerivedStats(restored, this.content).maxHp
-    pushNotification(restored, 'You collapse and awaken at your last checkpoint.')
+    pushNotification(restored, 'You collapse and awaken at your last checkpoint.', {
+      kind: 'system',
+      dedupeKey: 'restore-checkpoint',
+    })
     this.state = restored
     this.activeDialogue = null
+    this.clearGameplayInput()
     this.renderCurrentMap()
+    this.publishSnapshot()
+  }
+
+  private spawnFloatingText(x: number, y: number, text: string, color: string): void {
+    const label = this.add.text(x, y, text, {
+      fontFamily: '"Trebuchet MS", sans-serif',
+      fontSize: '14px',
+      color,
+      stroke: '#140c0a',
+      strokeThickness: 3,
+    })
+    label.setOrigin(0.5)
+    this.mapObjects.push(label)
+    this.tweens.add({
+      targets: label,
+      y: y - 24,
+      alpha: 0,
+      duration: 520,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        label.destroy()
+        this.mapObjects = this.mapObjects.filter((entry) => entry !== label)
+      },
+    })
+  }
+
+  private refreshObjectivePresentation(): void {
+    const objectiveTarget = this.getActiveObjectiveTarget()
+
+    for (const npc of this.npcRuntimes) {
+      const isTarget = objectiveTarget.kind === 'npc' && objectiveTarget.targetId === npc.data.id
+      npc.marker.setVisible(isTarget)
+      npc.ring.setStrokeStyle(2, isTarget ? 0xffd28b : 0x7de2d1, isTarget ? 0.8 : 0.34)
+    }
+
+    for (const exit of this.exitRuntimes) {
+      const isTarget = objectiveTarget.kind === 'exit' && objectiveTarget.targetId === exit.data.id
+      exit.zone.setStrokeStyle(2, isTarget ? 0xffefb5 : 0xffd08f, isTarget ? 0.6 : 0.26)
+      exit.zone.setFillStyle(0xffd08f, isTarget ? 0.2 : 0.12)
+      exit.label.setColor(isTarget ? '#fff5d2' : '#ffe8c2')
+      exit.beacon.setVisible(isTarget)
+    }
+
+    for (const enemy of this.enemyRuntimes) {
+      const isTarget = objectiveTarget.kind === 'enemy' && objectiveTarget.targetId === enemy.data.id
+      enemy.marker.setVisible(isTarget)
+      enemy.ring.setStrokeStyle(2, isTarget ? 0xffd28b : 0xff8e7d, isTarget ? 0.72 : 0.42)
+    }
+  }
+
+  private getActiveObjectiveTarget(): ObjectiveTarget {
+    if (!this.state) {
+      return { kind: 'none', mapId: null, targetId: null, label: null }
+    }
+
+    return getObjectiveTarget(this.state, this.content)
   }
 
   private buildDialogueView(): DialogueView | null {
@@ -893,6 +1255,9 @@ export class RpgScene extends Phaser.Scene {
       return
     }
 
+    this.refreshObjectivePresentation()
+    this.interactionHint = this.computeInteractionHint()
+
     const player: PlayerView = getPlayerView(this.state, this.content)
     this.controller.publish({
       screen: 'playing',
@@ -900,6 +1265,9 @@ export class RpgScene extends Phaser.Scene {
       locationName: this.currentMap.name,
       locationDescription: this.currentMap.description,
       nextStep: getNextStep(this.state, this.content),
+      saveStatus: getSaveStatus(this.state),
+      objectiveTarget: getObjectiveTarget(this.state, this.content),
+      celebration: getCelebration(this.state, this.content),
       player,
       inventory: getInventoryViews(this.state, this.content),
       quests: getQuestViews(this.state, this.content),
@@ -907,22 +1275,25 @@ export class RpgScene extends Phaser.Scene {
       notifications: this.state.notifications,
       interactionHint: this.interactionHint,
       objective: getCurrentObjective(this.state, this.content),
-      lastSavedAt: this.state.saveMeta?.savedAt ?? null,
     })
   }
 
-  private persistState(notify: boolean, notificationText?: string): void {
+  private persistState(kind: SaveKind, notificationText?: string): void {
     if (!this.state) {
       return
     }
 
     this.state.saveMeta = {
       savedAt: new Date().toISOString(),
-      version: 1,
+      version: 2,
+      kind,
     }
 
-    if (notify && notificationText) {
-      pushNotification(this.state, notificationText)
+    if (kind === 'manual' && notificationText) {
+      pushNotification(this.state, notificationText, {
+        kind: 'save',
+        dedupeKey: 'manual-save',
+      })
     }
 
     saveGameState(this.state)
@@ -939,6 +1310,8 @@ export class RpgScene extends Phaser.Scene {
     this.obstacleGroup = null
     this.enemyRuntimes = []
     this.npcRuntimes = []
+    this.exitRuntimes = []
+    this.bossBar = null
 
     for (const object of this.mapObjects) {
       object.destroy()

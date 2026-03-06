@@ -1,0 +1,81 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]: EF
+        - generic [ref=e8]:
+          - paragraph [ref=e9]: Keyboard-first frontier RPG
+          - heading "Emberfall Frontier" [level=1] [ref=e10]
+      - generic [ref=e11]:
+        - generic [ref=e12]:
+          - generic [ref=e13]: Location
+          - strong [ref=e14]: Emberfall
+        - generic [ref=e15]:
+          - generic [ref=e16]: Objective
+          - strong [ref=e17]: Walk north to Elder Mira in the Council Hall and press E.
+        - generic [ref=e18]:
+          - generic [ref=e19]: Save Status
+          - strong [ref=e20]: No save yet
+        - button "Show Help" [ref=e21] [cursor=pointer]
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]:
+            - generic [ref=e26]: Autosave live
+            - strong [ref=e27]: Travel, quest beats, checkpoints, and loot update automatically.
+          - generic [ref=e28]:
+            - button "Attack" [ref=e29] [cursor=pointer]
+            - button "Heal (2)" [ref=e87] [cursor=pointer]
+            - button "Save Now" [ref=e31] [cursor=pointer]
+        - generic [ref=e33]:
+          - generic:
+            - generic:
+              - text: Route
+              - strong: Walk north to Elder Mira in the Council Hall and press E.
+              - paragraph: Elder Mira has the first briefing.
+          - generic:
+            - generic:
+              - generic: Manual save ready
+              - generic: Elder Mira has the first briefing.
+      - complementary [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]:
+            - generic [ref=e38]:
+              - paragraph [ref=e39]: Field Deck
+              - heading "Active Route" [level=2] [ref=e88]
+            - button "Save Now" [ref=e41] [cursor=pointer]
+          - generic [ref=e42]:
+            - generic [ref=e43]:
+              - generic [ref=e44]: Target
+              - strong [ref=e45]: npc
+            - generic [ref=e46]:
+              - generic [ref=e47]: Autosave
+              - strong [ref=e48]: Manual locked
+          - tablist "Field deck panels" [ref=e49]:
+            - button "Guide" [ref=e50] [cursor=pointer]
+            - button "Quest" [ref=e51] [cursor=pointer]
+            - button "Pack" [ref=e52] [cursor=pointer]
+            - button "Log" [ref=e53] [cursor=pointer]
+          - generic [ref=e55]:
+            - generic [ref=e56]:
+              - generic [ref=e57]: Objective Route
+              - heading "Walk north to Elder Mira in the Council Hall and press E." [level=3] [ref=e89]
+              - paragraph [ref=e59]: Elder Mira has the first briefing.
+            - generic [ref=e60]:
+              - generic [ref=e61]: Field Readout
+              - generic [ref=e62]:
+                - generic [ref=e63]:
+                  - generic [ref=e64]: HP
+                  - strong [ref=e65]: 64 / 72
+                - generic [ref=e66]:
+                  - generic [ref=e67]: Level
+                  - strong [ref=e68]: 1 • XP 0
+                - generic [ref=e69]:
+                  - generic [ref=e70]: Attack
+                  - strong [ref=e71]: "12"
+                - generic [ref=e72]:
+                  - generic [ref=e73]: Gold
+                  - strong [ref=e74]: "18"
+            - generic [ref=e75]:
+              - generic [ref=e76]: Nearby
+              - paragraph [ref=e77]: Elder Mira has the first briefing.

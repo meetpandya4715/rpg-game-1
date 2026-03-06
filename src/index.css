@@ -1,25 +1,26 @@
 :root {
-  font-family: "Gill Sans", "Trebuchet MS", sans-serif;
-  line-height: 1.5;
+  font-family: "Segoe UI", "Aptos", "Trebuchet MS", sans-serif;
+  line-height: 1.6;
   font-weight: 400;
-  color: #f4e8cd;
+  color: #f4ead4;
   background:
-    radial-gradient(circle at top, rgba(222, 145, 70, 0.24), transparent 34%),
-    radial-gradient(circle at bottom left, rgba(73, 123, 88, 0.32), transparent 28%),
-    linear-gradient(180deg, #120d0f 0%, #17131b 48%, #0f1216 100%);
+    radial-gradient(circle at top, rgba(255, 170, 94, 0.18), transparent 32%),
+    radial-gradient(circle at bottom left, rgba(65, 105, 78, 0.24), transparent 30%),
+    linear-gradient(180deg, #120d0f 0%, #17131b 50%, #101318 100%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --page-bg: rgba(18, 14, 18, 0.74);
+  --page-bg: rgba(18, 14, 18, 0.78);
   --panel-bg: rgba(37, 28, 25, 0.88);
-  --panel-border: rgba(228, 186, 123, 0.34);
-  --panel-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+  --panel-border: rgba(228, 186, 123, 0.24);
+  --panel-shadow: 0 24px 64px rgba(0, 0, 0, 0.34);
   --accent: #f3b46f;
   --accent-strong: #ff8f3d;
   --accent-soft: rgba(243, 180, 111, 0.16);
-  --ink: #f4e8cd;
-  --muted: #c8b99a;
+  --ink: #f4ead4;
+  --muted: #ccbba4;
+  --muted-strong: #e0c7a4;
   --success: #8dc58d;
   --danger: #e2867d;
   --canvas-border: rgba(255, 232, 201, 0.16);
@@ -50,6 +51,7 @@ select {
 
 button {
   cursor: pointer;
+  border: 0;
 }
 
 a {
