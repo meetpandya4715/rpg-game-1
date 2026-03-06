@@ -1,73 +1,102 @@
-# React + TypeScript + Vite
+# Emberfall Frontier
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Keyboard-first browser RPG built with `React`, `TypeScript`, and `Phaser`.
 
-Currently, two official plugins are available:
+This project is a small web RPG vertical slice with:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- A town, wilderness route, and dungeon
+- NPC dialogue and a main questline
+- Real-time movement and melee combat
+- Inventory, equipment, healing items, and quest rewards
+- Local save/load in browser storage
+- Keyboard-only UI flow for gameplay, dialogue, and menus
 
-## React Compiler
+## Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `React 19`
+- `TypeScript`
+- `Vite`
+- `Phaser 3`
 
-## Expanding the ESLint configuration
+## Requirements
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- `Node.js 22+`
+- `npm 11+`
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Setup
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+Install dependencies:
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Start the dev server:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+
+Build for production:
+
+```bash
+npm run build
+```
+
+Lint the codebase:
+
+```bash
+npm run lint
+```
+
+Quick verification:
+
+```bash
+npm run dev
+```
+
+Then open the local Vite URL and confirm you can start a run, move, talk, attack, and transition between maps.
+
+## Controls
+
+- `WASD` or arrow keys: move
+- `E`: interact with nearby NPCs
+- `Space`: attack nearby enemies
+- `H`: use a tonic
+- `P`: save game
+- `1-4`: switch side panels
+- `Q`: quest panel
+- `I`: inventory panel
+- `L`: log panel
+- `Ctrl+,`: toggle the command sheet
+- `Esc`: close dialogue or close the command sheet
+- `J/K` or arrow keys in dialogue: move selection
+- `Enter` in dialogue/inventory: confirm action
+
+## Current Game Flow
+
+1. Start in Emberfall.
+2. Speak with Elder Mira to take the quest.
+3. Leave town through the east gate.
+4. Cross the Greenwild and fight or avoid roaming enemies.
+5. Enter the Ashen Ruin.
+6. Defeat the Ashen Guardian and recover the Sunstone.
+7. Return to Emberfall and turn the relic in.
+
+## Project Structure
+
+```text
+public/content/         JSON content pack for maps, NPCs, enemies, items, quests, and dialogue
+src/App.tsx             React shell, keyboard UI, side panels, and overlays
+src/game/controller.ts  Bridge between React and Phaser
+src/game/phaser/        Phaser scene and runtime logic
+src/game/state.ts       Derived state, inventory, quests, and objective helpers
+src/game/storage.ts     Browser save/load
+src/game/types.ts       Shared game and content types
+```
+
+## Notes
+
+- Saves are stored in browser local storage.
+- The current branch is pushed to GitHub over SSH.
+- The production bundle is functional, but Phaser still produces a large chunk warning during build.
