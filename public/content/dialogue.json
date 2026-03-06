@@ -1,0 +1,140 @@
+[
+  {
+    "id": "elder_intro",
+    "speaker": "Elder Mira",
+    "text": "The Ashen Ruin has begun to flare again. Our Sunstone was taken deeper into the vault. Bring it back before night turns against us.",
+    "options": [
+      {
+        "id": "accept_quest",
+        "label": "I will bring it home.",
+        "nextId": "elder_accept",
+        "actions": [
+          { "type": "startQuest", "questId": "ember_relic" }
+        ]
+      },
+      {
+        "id": "decline_quest",
+        "label": "I need a moment.",
+        "close": true
+      }
+    ]
+  },
+  {
+    "id": "elder_accept",
+    "speaker": "Elder Mira",
+    "text": "Take the eastern road through the Greenwild. The ruin gate still answers the old watch sigils.",
+    "options": [
+      {
+        "id": "leave_elder",
+        "label": "I am on my way.",
+        "close": true
+      }
+    ]
+  },
+  {
+    "id": "elder_reminder",
+    "speaker": "Elder Mira",
+    "text": "The Greenwild is restless, and the ruin guards wake again. Bring me the Sunstone and we can hold the line.",
+    "options": [
+      {
+        "id": "elder_reminder_close",
+        "label": "I will return soon.",
+        "close": true
+      }
+    ]
+  },
+  {
+    "id": "elder_turnin",
+    "speaker": "Elder Mira",
+    "text": "The Sunstone's light returns with you. Place it here, and let Emberfall breathe again.",
+    "options": [
+      {
+        "id": "turn_in_relic",
+        "label": "Return the Sunstone.",
+        "nextId": "elder_complete",
+        "actions": [
+          { "type": "removeItem", "itemId": "sunstone", "quantity": 1 },
+          { "type": "completeQuest", "questId": "ember_relic" },
+          { "type": "setFlag", "flag": "sunstone_returned", "value": true }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "elder_complete",
+    "speaker": "Elder Mira",
+    "text": "Well done. The wards are steady, and the town will remember who stood when the ruin stirred.",
+    "options": [
+      {
+        "id": "elder_complete_close",
+        "label": "Stay warm, Elder.",
+        "close": true
+      }
+    ]
+  },
+  {
+    "id": "healer_offer",
+    "speaker": "Iora the Hearthkeeper",
+    "text": "Hold still. The road only gets crueler once the pines thin out.",
+    "options": [
+      {
+        "id": "accept_healing",
+        "label": "Patch me up.",
+        "close": true,
+        "actions": [
+          { "type": "healPlayer", "full": true }
+        ]
+      },
+      {
+        "id": "healer_decline",
+        "label": "I can manage.",
+        "close": true
+      }
+    ]
+  },
+  {
+    "id": "merchant_intro",
+    "speaker": "Benn of the Watch Market",
+    "text": "If you're headed into the Greenwild, take one tonic from my personal crate. Consider it an investment in seeing you come back.",
+    "options": [
+      {
+        "id": "take_supplies",
+        "label": "I'll take the tonic.",
+        "close": true,
+        "actions": [
+          { "type": "giveItem", "itemId": "potion", "quantity": 1 },
+          { "type": "setFlag", "flag": "merchant_supplies_taken", "value": true }
+        ]
+      },
+      {
+        "id": "decline_supplies",
+        "label": "Save it for someone worse off.",
+        "close": true
+      }
+    ]
+  },
+  {
+    "id": "merchant_after",
+    "speaker": "Benn of the Watch Market",
+    "text": "The road east has teeth. Strike first, keep moving, and don't waste your tonic when Iora can still mend you for free.",
+    "options": [
+      {
+        "id": "merchant_after_close",
+        "label": "Understood.",
+        "close": true
+      }
+    ]
+  },
+  {
+    "id": "scout_hint",
+    "speaker": "Tamsin the Scout",
+    "text": "The ruin guardian hits hard, but it still thinks like a soldier. Step in, strike, then keep circling before it pins you.",
+    "options": [
+      {
+        "id": "scout_hint_close",
+        "label": "I'll remember that.",
+        "close": true
+      }
+    ]
+  }
+]

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "elder_mira",
+    "name": "Elder Mira",
+    "mapId": "town",
+    "x": 620,
+    "y": 250,
+    "color": "#f3b46f",
+    "conversations": [
+      {
+        "nodeId": "elder_complete",
+        "questId": "ember_relic",
+        "questStatus": "complete"
+      },
+      {
+        "nodeId": "elder_turnin",
+        "flag": "sunstone_recovered",
+        "flagValue": true
+      },
+      {
+        "nodeId": "elder_reminder",
+        "questId": "ember_relic",
+        "questStatus": "active"
+      },
+      {
+        "nodeId": "elder_intro"
+      }
+    ]
+  },
+  {
+    "id": "iora",
+    "name": "Iora",
+    "mapId": "town",
+    "x": 310,
+    "y": 480,
+    "color": "#8fd0b4",
+    "conversations": [
+      {
+        "nodeId": "healer_offer"
+      }
+    ]
+  },
+  {
+    "id": "benn",
+    "name": "Benn",
+    "mapId": "town",
+    "x": 940,
+    "y": 450,
+    "color": "#b5d58c",
+    "conversations": [
+      {
+        "nodeId": "merchant_after",
+        "flag": "merchant_supplies_taken",
+        "flagValue": true
+      },
+      {
+        "nodeId": "merchant_intro"
+      }
+    ]
+  },
+  {
+    "id": "tamsin",
+    "name": "Tamsin",
+    "mapId": "wilds",
+    "x": 720,
+    "y": 350,
+    "color": "#c0b7ff",
+    "conversations": [
+      {
+        "nodeId": "scout_hint"
+      }
+    ]
+  }
+]

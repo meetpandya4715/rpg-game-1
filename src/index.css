@@ -1,0 +1,57 @@
+:root {
+  font-family: "Gill Sans", "Trebuchet MS", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #f4e8cd;
+  background:
+    radial-gradient(circle at top, rgba(222, 145, 70, 0.24), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(73, 123, 88, 0.32), transparent 28%),
+    linear-gradient(180deg, #120d0f 0%, #17131b 48%, #0f1216 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --page-bg: rgba(18, 14, 18, 0.74);
+  --panel-bg: rgba(37, 28, 25, 0.88);
+  --panel-border: rgba(228, 186, 123, 0.34);
+  --panel-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+  --accent: #f3b46f;
+  --accent-strong: #ff8f3d;
+  --accent-soft: rgba(243, 180, 111, 0.16);
+  --ink: #f4e8cd;
+  --muted: #c8b99a;
+  --success: #8dc58d;
+  --danger: #e2867d;
+  --canvas-border: rgba(255, 232, 201, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}

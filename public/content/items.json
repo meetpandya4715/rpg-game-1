@@ -1,0 +1,52 @@
+[
+  {
+    "id": "potion",
+    "name": "Frontier Tonic",
+    "type": "consumable",
+    "description": "A sharp herbal tonic that restores 26 HP.",
+    "value": 12,
+    "stackable": true,
+    "healAmount": 26
+  },
+  {
+    "id": "iron_sword",
+    "name": "Iron Sword",
+    "type": "weapon",
+    "description": "Reliable steel from the Emberfall watch.",
+    "value": 40,
+    "stackable": false,
+    "slot": "weapon",
+    "statBonuses": {
+      "attack": 4
+    }
+  },
+  {
+    "id": "leather_vest",
+    "name": "Leather Vest",
+    "type": "armor",
+    "description": "Stitched hide that softens wildland blows.",
+    "value": 28,
+    "stackable": false,
+    "slot": "armor",
+    "statBonuses": {
+      "defense": 2,
+      "maxHp": 8
+    }
+  },
+  {
+    "id": "ward_charm",
+    "name": "Ward Charm",
+    "type": "quest",
+    "description": "A charm woven by Elder Mira after the Sunstone returns home.",
+    "value": 0,
+    "stackable": false
+  },
+  {
+    "id": "sunstone",
+    "name": "Sunstone Relic",
+    "type": "quest",
+    "description": "A warm relic pulsing with old protective fire.",
+    "value": 0,
+    "stackable": false
+  }
+]

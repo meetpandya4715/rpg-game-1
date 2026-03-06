@@ -1,0 +1,29 @@
+[
+  {
+    "id": "ember_relic",
+    "name": "The Ember Relic",
+    "summary": "Recover the Sunstone from the Ashen Ruin and return it to Emberfall.",
+    "stages": [
+      {
+        "id": "travel",
+        "title": "Cross the Greenwild",
+        "description": "Leave Emberfall to the east and reach the Ashen Ruin."
+      },
+      {
+        "id": "return",
+        "title": "Return the Sunstone",
+        "description": "Carry the Sunstone back to Elder Mira in Emberfall."
+      },
+      {
+        "id": "complete",
+        "title": "The Town Endures",
+        "description": "The Sunstone rests once more in Emberfall's warding hearth."
+      }
+    ],
+    "reward": {
+      "gold": 40,
+      "xp": 60,
+      "itemId": "ward_charm"
+    }
+  }
+]
